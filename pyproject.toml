@@ -1,0 +1,172 @@
+[build-system]
+build-backend = 'setuptools.build_meta'
+requires = ['setuptools>=77.0', 'setuptools_scm>=8']
+
+[project]
+name = 'pyvista-manifold'
+dynamic = ['version']
+description = 'PyVista accessor for the Manifold 3D geometry library — solid Booleans, hulls, refinement, and more.'
+readme = 'README.md'
+license = 'MIT'
+requires-python = '>=3.10'
+authors = [{ name = 'The PyVista Developers', email = 'info@pyvista.org' }]
+classifiers = [
+  'Development Status :: 3 - Alpha',
+  'Intended Audience :: Developers',
+  'Intended Audience :: Science/Research',
+  'Operating System :: MacOS',
+  'Operating System :: POSIX :: Linux',
+  'Operating System :: Microsoft :: Windows',
+  'Programming Language :: Python :: 3',
+  'Programming Language :: Python :: 3.10',
+  'Programming Language :: Python :: 3.11',
+  'Programming Language :: Python :: 3.12',
+  'Programming Language :: Python :: 3.13',
+  'Programming Language :: Python :: 3.14',
+  'Topic :: Scientific/Engineering :: Mathematics',
+  'Topic :: Scientific/Engineering :: Visualization',
+  'Typing :: Typed',
+]
+keywords = ['3d', 'pyvista', 'manifold', 'mesh', 'csg', 'boolean', 'geometry']
+dependencies = ['manifold3d>=3.0', 'numpy>=1.24', 'pyvista>=0.48']
+
+[project.optional-dependencies]
+dev = [
+  'mypy>=1.10',
+  'pytest>=8.0',
+  'pytest-cov>=5.0',
+  'pytest-pyvista>=0.1',
+  'ruff>=0.15',
+]
+
+[project.entry-points.'pyvista.accessors']
+manifold = 'pyvista_manifold._accessor'
+
+[project.urls]
+Homepage = 'https://github.com/pyvista/pyvista-manifold'
+Issues = 'https://github.com/pyvista/pyvista-manifold/issues'
+Repository = 'https://github.com/pyvista/pyvista-manifold'
+
+[tool.coverage.run]
+branch = true
+source = ['pyvista_manifold']
+
+[tool.coverage.report]
+fail_under = 80
+exclude_lines = [
+  'pragma: no cover',
+  'if TYPE_CHECKING:',
+  'if __name__',
+  '\.\.\.',
+]
+
+[tool.pytest.ini_options]
+addopts = '-v'
+filterwarnings = [
+  'error',
+  'ignore:pyvista test.*does not yet exist:UserWarning',
+]
+testpaths = ['tests']
+xfail_strict = true
+image_cache_dir = 'tests/image_cache'
+
+[tool.ruff]
+line-length = 99
+src = ['.']
+extend-exclude = ['pyvista_manifold/_version.py']
+
+[tool.ruff.format]
+docstring-code-format = true
+docstring-code-line-length = 75
+quote-style = 'single'
+
+[tool.ruff.lint]
+ignore = [
+  'D107', # Missing docstring in `__init__`
+]
+extend-select = [
+  'A',
+  'B',
+  'C4',
+  'D',
+  'E',
+  'EM',
+  'F',
+  'FA',
+  'FLY',
+  'I',
+  'ICN',
+  'N',
+  'PERF',
+  'PGH',
+  'PIE',
+  'PLC0415',
+  'PT',
+  'RET',
+  'RSE',
+  'RUF',
+  'SIM',
+  'T10',
+  'T20',
+  'TCH',
+  'TID',
+  'UP',
+  'W',
+  'YTT',
+]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+force-sort-within-sections = true
+
+[tool.ruff.lint.per-file-ignores]
+'__init__.py' = ['E402', 'PLC0414']
+'tests/**' = ['D', 'S101', 'T20', 'TC003']
+# assets/ holds rendering scripts: print() is fine, docstrings are still required.
+'assets/**' = ['T20']
+# examples/ holds tutorial notebooks: skip docstring rules on demo cells.
+'examples/**' = ['D']
+
+[tool.ruff.lint.pydocstyle]
+convention = 'numpy'
+
+[tool.numpydoc_validation]
+checks = [
+  'all',
+  'ES01',
+  'EX01',
+  'GL01',
+  'GL02',
+  'GL03',
+  'GL08',
+  'PR01',
+  'PR02',
+  'PR03',
+  'PR04',
+  'PR05',
+  'PR06',
+  'PR07',
+  'PR08',
+  'PR09',
+  'PR10',
+  'RT02',
+  'SA01',
+  'SA04',
+  'YD01',
+]
+exclude = ['\._.*$']
+
+[tool.mypy]
+python_version = '3.10'
+ignore_missing_imports = true
+
+[tool.setuptools.package-data]
+pyvista_manifold = ['py.typed']
+
+[tool.setuptools.packages.find]
+where = ['.']
+include = ['pyvista_manifold*']
+
+[tool.setuptools_scm]
+write_to = 'pyvista_manifold/_version.py'
+version_scheme = 'release-branch-semver'
