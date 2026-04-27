@@ -4,7 +4,26 @@ from collections.abc import Sequence
 
 import manifold3d
 import numpy as np
+import numpy.typing as npt
 import pyvista as pv
+
+
+def _as_contiguous_array(array: npt.ArrayLike, *, dtype: npt.DTypeLike) -> np.ndarray:
+    """Return ``array`` as a contiguous NumPy array with the requested dtype."""
+    contiguous_array = np.asarray(array, dtype=dtype)
+    if contiguous_array.flags.c_contiguous:
+        return contiguous_array
+    return np.ascontiguousarray(contiguous_array)
+
+
+def _polydata_from_mesh_data(mesh_data: manifold3d.Mesh) -> tuple[pv.PolyData, np.ndarray]:
+    """Build ``PolyData`` geometry from a Manifold mesh export."""
+    vert_props = np.asarray(mesh_data.vert_properties)
+    tri_verts = _as_contiguous_array(mesh_data.tri_verts, dtype=np.dtype(pv.ID_TYPE))
+    points = np.array(vert_props[:, :3], copy=True)
+
+    poly = pv.PolyData.from_regular_faces(points, tri_verts, deep=False)
+    return poly, vert_props
 
 
 def to_manifold(
@@ -51,13 +70,13 @@ def to_manifold(
     pd = mesh.clean() if clean else mesh
     if not pd.is_all_triangles:
         pd = pd.triangulate()
-    vertices = np.ascontiguousarray(pd.points, dtype=np.float32)
-    tri_verts = np.ascontiguousarray(pd.regular_faces, dtype=np.uint32)
+    vertices = _as_contiguous_array(pd.points, dtype=np.dtype(np.float32))
+    tri_verts = _as_contiguous_array(pd.regular_faces, dtype=np.dtype(np.uint32))
 
     if point_data_keys:
         cols: list[np.ndarray] = [vertices]
         for key in point_data_keys:
-            arr = np.asarray(pd.point_data[key], dtype=np.float32)
+            arr = _as_contiguous_array(pd.point_data[key], dtype=np.dtype(np.float32))
             if arr.ndim == 1:
                 arr = arr.reshape(-1, 1)
             elif arr.ndim != 2:
@@ -69,8 +88,8 @@ def to_manifold(
                     f'{vertices.shape[0]} points.'
                 )
                 raise ValueError(msg)
-            cols.append(np.ascontiguousarray(arr, dtype=np.float32))
-        vert_props = np.ascontiguousarray(np.hstack(cols), dtype=np.float32)
+            cols.append(arr)
+        vert_props = np.concatenate(cols, axis=1)
     else:
         vert_props = vertices
 
@@ -106,26 +125,13 @@ def from_manifold(
     if manifold.is_empty():
         return pv.PolyData()
 
-    mesh_data = manifold.to_mesh()
-    vert_props = np.asarray(mesh_data.vert_properties)
-    tri_verts = np.asarray(mesh_data.tri_verts, dtype=np.int_)
-
-    vertices = np.ascontiguousarray(vert_props[:, :3], dtype=np.float64)
-
-    n_tri = tri_verts.shape[0]
-    faces = np.empty((n_tri, 4), dtype=np.int_)
-    faces[:, 0] = 3
-    faces[:, 1:] = tri_verts
-
-    # PolyData stubs want literal ``dtype[int]`` which numpy ints don't satisfy;
-    # the runtime accepts any int ndarray.
-    poly = pv.PolyData(vertices, faces.ravel())  # type: ignore[arg-type]
+    poly, vert_props = _polydata_from_mesh_data(manifold.to_mesh())
 
     extra = vert_props[:, 3:]
     if extra.shape[1] > 0:
         names = list(property_names) if property_names else []
         for i in range(extra.shape[1]):
             name = names[i] if i < len(names) else f'property_{i}'
-            poly.point_data[name] = np.ascontiguousarray(extra[:, i])
+            poly.point_data[name] = np.array(extra[:, i], copy=True)
 
     return poly

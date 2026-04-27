@@ -5,13 +5,17 @@ Importing this module registers the ``manifold`` accessor namespace on
 do not normally need to import it directly.
 """
 
+import atexit
 from collections.abc import Callable, Iterable, Sequence
+import weakref
 
 import manifold3d
 import numpy as np
 import pyvista as pv
 
-from pyvista_manifold._conversion import from_manifold, to_manifold
+from pyvista_manifold._conversion import _polydata_from_mesh_data, from_manifold, to_manifold
+
+_LIVE_ACCESSORS: weakref.WeakSet = weakref.WeakSet()
 
 
 def _coerce_manifold(obj: pv.PolyData | manifold3d.Manifold) -> manifold3d.Manifold:
@@ -19,7 +23,7 @@ def _coerce_manifold(obj: pv.PolyData | manifold3d.Manifold) -> manifold3d.Manif
     if isinstance(obj, manifold3d.Manifold):
         return obj
     if isinstance(obj, pv.PolyData):
-        return to_manifold(obj)
+        return obj.manifold.to_manifold()
     msg = f'Expected pyvista.PolyData or manifold3d.Manifold, got {type(obj).__name__}.'
     raise TypeError(msg)
 
@@ -30,7 +34,7 @@ def _cross_section_to_polydata(cs: manifold3d.CrossSection, *, z: float = 0.0) -
         return pv.PolyData()
     contours = cs.to_polygons()
     points: list[np.ndarray] = []
-    lines: list[int] = []
+    lines: list[np.ndarray] = []
     offset = 0
     for contour in contours:
         contour = np.asarray(contour, dtype=np.float64)
@@ -39,14 +43,12 @@ def _cross_section_to_polydata(cs: manifold3d.CrossSection, *, z: float = 0.0) -
             continue
         pts3d = np.column_stack([contour, np.full(n, z)])
         points.append(pts3d)
-        lines.append(n + 1)
-        lines.extend(range(offset, offset + n))
-        lines.append(offset)  # close the loop
+        line = np.append(np.arange(offset, offset + n, dtype=pv.ID_TYPE), offset)
+        lines.append(line)
         offset += n
     if not points:
         return pv.PolyData()
-    # PolyData stubs want literal ``dtype[int]``; the runtime accepts any int ndarray.
-    return pv.PolyData(np.vstack(points), lines=np.asarray(lines, dtype=np.int_))  # type: ignore[arg-type]
+    return pv.PolyData(np.vstack(points), lines=pv.CellArray.from_irregular_cells(lines))
 
 
 @pv.register_dataset_accessor('manifold', pv.PolyData)
@@ -56,12 +58,14 @@ class ManifoldAccessor:
     Every operation that returns geometry returns a fresh
     :class:`pyvista.PolyData`, never a :class:`~manifold3d.Manifold`. Use
     :meth:`to_manifold` to drop down to the raw Manifold object when
-    needed.
+    needed. The default ``clean=True`` conversion is cached on the
+    accessor instance and invalidated whenever the source dataset is
+    modified.
 
     Examples
     --------
     >>> import pyvista as pv
-    >>> import pyvista_manifold  # registers the accessor  # noqa: F401
+    >>> import pyvista_manifold  # registers the accessor
     >>> a = pv.Cube()
     >>> b = pv.Sphere(radius=0.7).translate((0.5, 0.5, 0.5))
     >>> result = a.manifold.difference(b)
@@ -70,10 +74,33 @@ class ManifoldAccessor:
 
     def __init__(self, mesh: pv.PolyData) -> None:
         self._mesh = mesh
+        self._cached_manifold: manifold3d.Manifold | None = None
+        self._cached_manifold_mtime: int | None = None
+        _LIVE_ACCESSORS.add(self)
 
     # ------------------------------------------------------------------
     # Conversion
     # ------------------------------------------------------------------
+
+    def _mesh_mtime(self) -> int:
+        """Return the dataset modification time used for cache invalidation."""
+        # PyVista does not currently expose a public wrapper around VTK's
+        # dataset modified time. Use it here so the cached Manifold stays in
+        # sync with mutable ``PolyData`` instances.
+        return int(self._mesh.GetMTime())
+
+    def _default_manifold(self) -> manifold3d.Manifold:
+        """Return the cached default conversion for this dataset."""
+        current_mtime = self._mesh_mtime()
+        if self._cached_manifold_mtime != current_mtime or self._cached_manifold is None:
+            self._cached_manifold = to_manifold(self._mesh)
+            self._cached_manifold_mtime = current_mtime
+        return self._cached_manifold
+
+    def _clear_cached_manifold(self) -> None:
+        """Drop any cached Manifold wrapper held by this accessor."""
+        self._cached_manifold = None
+        self._cached_manifold_mtime = None
 
     def to_manifold(
         self,
@@ -96,6 +123,8 @@ class ManifoldAccessor:
             Manifold representation of this mesh.
 
         """
+        if point_data_keys is None and clean:
+            return self._default_manifold()
         return to_manifold(self._mesh, point_data_keys=point_data_keys, clean=clean)
 
     # ------------------------------------------------------------------
@@ -262,6 +291,9 @@ class ManifoldAccessor:
             s_t: tuple[float, float, float] = (float(s), float(s), float(s))
         else:
             vals = [float(v) for v in s]
+            if len(vals) != 3:
+                msg = f'scale sequence must have 3 elements, got {len(vals)}.'
+                raise ValueError(msg)
             s_t = (vals[0], vals[1], vals[2])
         return from_manifold(self.to_manifold().scale(s_t))
 
@@ -449,13 +481,7 @@ class ManifoldAccessor:
 
         """
         m = self.to_manifold().calculate_normals(normal_idx, min_sharp_angle=min_sharp_angle)
-        poly = from_manifold(m)
-        vert_props = np.asarray(m.to_mesh().vert_properties)
-        # ``from_manifold`` named every extra channel ``property_<i>``; drop
-        # them all and replace with a single ``Normals`` (Nx3) array.
-        for key in list(poly.point_data.keys()):
-            if key.startswith('property_'):
-                del poly.point_data[key]
+        poly, vert_props = _polydata_from_mesh_data(m.to_mesh())
         start = 3 + normal_idx
         poly.point_data['Normals'] = np.ascontiguousarray(vert_props[:, start : start + 3])
         return poly
@@ -485,13 +511,7 @@ class ManifoldAccessor:
 
         """
         m = self.to_manifold().calculate_curvature(gaussian_idx, mean_idx)
-        poly = from_manifold(m)
-        vert_props = np.asarray(m.to_mesh().vert_properties)
-        # Drop all ``property_<i>`` channels from the round-trip and only
-        # surface the two named curvature arrays.
-        for key in list(poly.point_data.keys()):
-            if key.startswith('property_'):
-                del poly.point_data[key]
+        poly, vert_props = _polydata_from_mesh_data(m.to_mesh())
         poly.point_data['GaussianCurvature'] = np.ascontiguousarray(
             vert_props[:, 3 + gaussian_idx]
         )
@@ -927,8 +947,13 @@ class ManifoldAccessor:
 _: type[pv.DataSetAccessor] = ManifoldAccessor
 
 
-def _registered() -> None:  # pragma: no cover - import-time side effect anchor
-    """No-op anchor; the import side effect above is what registers the accessor."""
+def _clear_live_accessor_caches() -> None:
+    """Release cached Manifold wrappers before interpreter shutdown."""
+    for accessor in tuple(_LIVE_ACCESSORS):
+        accessor._clear_cached_manifold()
+
+
+atexit.register(_clear_live_accessor_caches)
 
 
 __all__ = ['ManifoldAccessor']

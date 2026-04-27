@@ -176,10 +176,10 @@ def _polygons_to_cross_section(
     elif arr.ndim == 3 and arr.shape[2] == 2:
         contours = [np.ascontiguousarray(c, dtype=np.float32) for c in arr]
     else:
-        contours = [
-            np.ascontiguousarray(np.asarray(c, dtype=np.float32))
-            for c in polygons  # type: ignore[union-attr]
-        ]
+        if isinstance(polygons, np.ndarray):
+            msg = f'polygons must be (N, 2) or (M, N, 2), got shape {polygons.shape}.'
+            raise ValueError(msg)
+        contours = [np.ascontiguousarray(np.asarray(c, dtype=np.float32)) for c in polygons]
         for c in contours:
             if c.ndim != 2 or c.shape[1] != 2:
                 msg = f'each polygon must be (N, 2), got shape {c.shape}.'

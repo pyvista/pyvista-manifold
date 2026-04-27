@@ -3,14 +3,14 @@
 A PyVista accessor for [Manifold](https://github.com/elalish/manifold), a fast and reliable boolean / CSG library for triangle meshes.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/pyvista/pyvista-manifold/main/assets/gyroid.gif" alt="rotating gold gyroid TPMS sphere" width="520">
+  <img src="https://raw.githubusercontent.com/pyvista/pyvista-manifold/main/assets/gyroid.webp" alt="rotating gold gyroid TPMS sphere" width="520">
 </p>
 
 > A gyroid iso-surface intersected with a sphere, rendered in PBR gold. The whole solid was built in three function calls: `level_set` for the gyroid field, `pv.Sphere` for the trim, `mesh.manifold.intersection` to combine them.
 
 ![pyvista-manifold examples banner](https://raw.githubusercontent.com/pyvista/pyvista-manifold/main/assets/banner.png)
 
-> From left: a machined aluminum bracket built by chaining `union` and `difference`; a real mesh intersected with a gyroid TPMS lattice; the gold sphere above seen from a fixed angle; a cube fractured by repeated plane cuts.
+> From left: a machined aluminum bracket built by chaining `union` and `difference`; a real mesh intersected with a gyroid TPMS lattice; a cube fractured by repeated plane cuts. The gold sphere lives in the animation above.
 
 Once the package is installed, every `pv.PolyData` exposes a `.manifold` accessor. There is nothing to import.
 
@@ -24,7 +24,7 @@ cube.manifold.difference(sphere).plot()
 
 ## Why
 
-PyVista's built-in boolean filters wrap VTK's `vtkBooleanOperationPolyDataFilter`, which produces non-manifold or self-intersecting output on non-trivial inputs. Manifold solves the same problem with exact arithmetic and topology tracking. This package is the smallest reasonable bridge between the two: a single `.manifold` accessor that converts on demand and always returns a fresh `pv.PolyData`.
+PyVista's built-in boolean filters wrap VTK's `vtkBooleanOperationPolyDataFilter`, which produces non-manifold or self-intersecting output on non-trivial inputs. Manifold solves the same problem with exact arithmetic and topology tracking. This package is the smallest reasonable bridge between the two: a single `.manifold` accessor that converts on demand, caches the default Manifold conversion on the dataset accessor, and always returns a fresh `pv.PolyData`.
 
 ## Install
 
@@ -73,17 +73,17 @@ A worked walkthrough lives in [`examples/showcase.ipynb`](examples/showcase.ipyn
 
 ### Gallery
 
-|                                                                                                                               |                                                                                                                                               |
-| ----------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Mechanical CSG.** Stack `union` and `difference` to build a real-looking part.                                              | <img src="https://raw.githubusercontent.com/pyvista/pyvista-manifold/main/assets/bracket.png" alt="machined bracket" width="420">             |
-| **TPMS lattice infill.** Intersect a closed mesh with a gyroid field — the standard 3D-printer infill, computed in two lines. | <img src="https://raw.githubusercontent.com/pyvista/pyvista-manifold/main/assets/lattice_cow.png" alt="cow with gyroid infill" width="420">   |
-| **Topographic slicing.** `slice_z` at many heights stacks into a contour map of the silhouette.                               | <img src="https://raw.githubusercontent.com/pyvista/pyvista-manifold/main/assets/topographic.png" alt="horse topographic slices" width="420"> |
-| **Iso-surface from a callable.** `level_set` extracts a TPMS surface from a Python function, no marching-cubes plumbing.      | <img src="https://raw.githubusercontent.com/pyvista/pyvista-manifold/main/assets/gyroid.png" alt="gyroid TPMS sphere" width="420">            |
-| **Voronoi-style fracture.** Repeated `split_by_plane` calls turn a cube into a stack of polyhedral cells.                     | <img src="https://raw.githubusercontent.com/pyvista/pyvista-manifold/main/assets/fracture.png" alt="fractured cube" width="420">              |
+|                                                                                                                              |                                                                                                                                               |
+| ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Mechanical CSG.** Stack `union` and `difference` to build a real-looking part.                                             | <img src="https://raw.githubusercontent.com/pyvista/pyvista-manifold/main/assets/bracket.png" alt="machined bracket" width="420">             |
+| **TPMS lattice infill.** Intersect a closed mesh with a gyroid field, the standard 3D-printer infill, computed in two lines. | <img src="https://raw.githubusercontent.com/pyvista/pyvista-manifold/main/assets/lattice_cow.png" alt="cow with gyroid infill" width="420">   |
+| **Topographic slicing.** `slice_z` at many heights stacks into a contour map of the silhouette.                              | <img src="https://raw.githubusercontent.com/pyvista/pyvista-manifold/main/assets/topographic.png" alt="horse topographic slices" width="420"> |
+| **Iso-surface from a callable.** `level_set` extracts a TPMS surface from a Python function, no marching-cubes plumbing.     | <img src="https://raw.githubusercontent.com/pyvista/pyvista-manifold/main/assets/gyroid.png" alt="gyroid TPMS sphere" width="420">            |
+| **Voronoi-style fracture.** Repeated `split_by_plane` calls turn a cube into a stack of polyhedral cells.                    | <img src="https://raw.githubusercontent.com/pyvista/pyvista-manifold/main/assets/fracture.png" alt="fractured cube" width="420">              |
 
 ## The accessor
 
-`mesh.manifold` is a per-instance accessor that converts the PolyData into a `manifold3d.Manifold` on demand, runs the operation, and converts the result back. The input is left untouched.
+`mesh.manifold` is a per-instance accessor that converts the PolyData into a `manifold3d.Manifold` on demand, caches the default `clean=True` conversion until the dataset is modified, runs the operation, and converts the result back. The input is left untouched.
 
 ```python
 mesh.manifold                      # accessor instance, cached on the dataset

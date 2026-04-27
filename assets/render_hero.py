@@ -5,8 +5,8 @@ from pathlib import Path
 import urllib.request
 
 import numpy as np
+from PIL import Image
 import pyvista as pv
-from vtkmodules.vtkCommonMath import vtkMatrix3x3
 
 from pyvista_manifold import level_set
 
@@ -49,28 +49,55 @@ def _env_texture() -> pv.Texture:
     return _ENV_TEXTURE
 
 
-def _z_up_environment_rotation() -> vtkMatrix3x3:
-    """+90 deg about X: re-orient Y-up IBL sampling to PyVista's Z-up world."""
-    m = vtkMatrix3x3()
-    m.SetElement(1, 1, 0.0)
-    m.SetElement(1, 2, -1.0)
-    m.SetElement(2, 1, 1.0)
-    m.SetElement(2, 2, 0.0)
-    return m
+def _z_up_environment_rotation() -> np.ndarray:
+    """Return the 3x3 rotation that maps Y-up IBL data to PyVista's Z-up world."""
+    return pv.Transform().rotate_x(90).rotation_matrix
 
 
 def _setup_pbr(pl: pv.Plotter) -> None:
     """Configure the active renderer for PBR image-based lighting (IBL only).
 
-    Removes the default light kit so the only lighting comes from the HDR --
-    otherwise VTK's headlight + key/fill lights add bright spot reflections on
-    top of the IBL response.
+    Removes the default light kit so the only lighting comes from the HDR.
+    Otherwise VTK's headlight and key/fill lights add bright spot reflections
+    on top of the IBL response.
     """
-    pl.renderer.RemoveAllLights()
-    pl.set_environment_texture(_env_texture(), is_srgb=False)
-    pl.renderer.SetEnvironmentRotationMatrix(_z_up_environment_rotation())
-    # Keep the white background instead of the HDR as background.
-    pl.renderer.SetBackgroundTexture(None)
+    pl.remove_all_lights(only_active=True)
+    pl.set_environment_texture(
+        _env_texture(),
+        is_srgb=False,
+        rotation=_z_up_environment_rotation(),
+        show_background=False,
+    )
+
+
+def _save_webp_animation(
+    target: str | Path,
+    frames: list[np.ndarray],
+    *,
+    duration: int | list[int],
+) -> None:
+    """Write RGBA frames to a lossless animated WebP."""
+    pil_frames = [Image.fromarray(frame, mode='RGBA') for frame in frames]
+    pil_frames[0].save(
+        target,
+        format='WEBP',
+        save_all=True,
+        append_images=pil_frames[1:],
+        duration=duration,
+        loop=0,
+        lossless=True,
+        quality=100,
+        method=6,
+    )
+
+
+def _write_webp_animation(
+    path: Path,
+    frames: list[np.ndarray],
+    *,
+    duration: int | list[int],
+) -> None:
+    _save_webp_animation(path, frames, duration=duration)
 
 
 def gyroid(x: float, y: float, z: float, scale: float = 4.0) -> float:
@@ -230,11 +257,12 @@ def render_gyroid() -> None:
     pl.close()
 
 
-def render_gyroid_gif() -> None:
-    """Hero animation: gold gyroid blob with momentum-style multi-axis orbit."""
+def render_gyroid_animation() -> None:
+    """Hero animation: gold gyroid blob on a closed orbit for seamless looping."""
     blob = _gyroid_blob()
 
-    pl = pv.Plotter(window_size=(560, 560))
+    pl = pv.Plotter()
+    pl.window_size = [560, 560]
     _setup_pbr(pl)
     pl.add_mesh(
         blob,
@@ -248,36 +276,31 @@ def render_gyroid_gif() -> None:
     pl.camera_position = 'iso'
     pl.camera.zoom(1.25)
 
-    # Seamless infinite loop: linear azimuth + integer-period elevation/roll
-    # so frame N wraps cleanly back to frame 0 with the same per-frame step.
-    # ``t = i / n_frames`` (not ``n_frames - 1``) keeps the endpoints distinct
-    # so the GIF loop point isn't a duplicate frame.
-    n_frames = 60
-    pl.open_gif(str(ASSETS / 'gyroid.gif'), fps=22, palettesize=128)
-
-    prev_az = 0.0
-    prev_el = 0.0
-    prev_roll = 0.0
-    for i in range(n_frames):
-        t = i / n_frames
-        az = 360.0 * t
-        el = 18.0 * math.sin(2 * math.pi * t * 2)
-        roll = 6.0 * math.sin(2 * math.pi * t)
-
-        pl.camera.azimuth += az - prev_az
-        pl.camera.elevation += el - prev_el
-        pl.camera.roll += roll - prev_roll
-        pl.write_frame()
-
-        prev_az, prev_el, prev_roll = az, el, roll
+    n_steps = 60
+    fps = 22
+    frame_duration = round(1000 / fps)
+    frames: list[np.ndarray] = []
+    pl.render()
+    focal_point = np.array(pl.camera.focal_point)
+    base_position = np.array(pl.camera.position) - focal_point
+    base_up = np.array(pl.camera.up)
+    for angle in np.linspace(0.0, 360.0, n_steps + 1):
+        rotation = pv.Transform().rotate_z(angle).rotation_matrix
+        pl.camera.position = tuple(focal_point + rotation @ base_position)
+        pl.camera.up = tuple(rotation @ base_up)
+        pl.render()
+        frame = pl.screenshot(None, return_img=True, transparent_background=True)
+        frames.append(frame)
 
     pl.close()
+    durations = [frame_duration] * n_steps + [1]
+    _write_webp_animation(ASSETS / 'gyroid.webp', frames, duration=durations)
 
 
 def render_banner() -> None:
     """Wide hero banner: three CSG showcases as linked subplots.
 
-    The gold gyroid sphere lives in the rotating GIF at the top of the
+    The gold gyroid sphere lives in the rotating animation at the top of the
     README, so this banner skips it.
     """
     # 1. Bracket built from primitives
@@ -322,7 +345,8 @@ def render_banner() -> None:
                 new_pieces.append(b)
         pieces = new_pieces
 
-    pl = pv.Plotter(shape=(1, 3), border=False, window_size=(2100, 700))
+    pl = pv.Plotter(shape=(1, 3), border=False)
+    pl.window_size = [2100, 700]
     pl.set_background('white')
 
     pl.subplot(0, 0)
@@ -367,7 +391,7 @@ def render_banner() -> None:
 
 
 if __name__ == '__main__':
-    render_gyroid_gif()
+    render_gyroid_animation()
     render_banner()
     render_bracket()
     render_gyroid()

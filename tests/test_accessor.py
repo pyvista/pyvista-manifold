@@ -8,6 +8,7 @@ import pytest
 import pyvista as pv
 
 import pyvista_manifold as pvm
+import pyvista_manifold._accessor as accessor_module
 
 
 def test_accessor_registered():
@@ -20,6 +21,55 @@ def test_accessor_registered():
 def test_accessor_to_manifold():
     m = pv.Sphere().manifold.to_manifold()
     assert isinstance(m, manifold3d.Manifold)
+
+
+def test_accessor_to_manifold_uses_default_cache():
+    sphere = pv.Sphere()
+    first = sphere.manifold.to_manifold()
+    second = sphere.manifold.to_manifold()
+    assert first is second
+
+
+def test_accessor_to_manifold_invalidates_cache_after_mesh_mutation():
+    cube = pv.Cube()
+    first = cube.manifold.to_manifold()
+    cube.points[:, 0] *= 2.0
+    second = cube.manifold.to_manifold()
+    assert second is not first
+    np.testing.assert_allclose(second.bounding_box()[0], -1.0, atol=1e-5)
+
+
+def test_accessor_to_manifold_does_not_cache_point_data_queries():
+    sphere = pv.Sphere()
+    sphere.point_data['scalar'] = np.linspace(0.0, 1.0, sphere.n_points)
+    first = sphere.manifold.to_manifold(point_data_keys=['scalar'])
+    second = sphere.manifold.to_manifold(point_data_keys=['scalar'])
+    assert first is not second
+
+
+def test_difference_reuses_other_accessor_cache(monkeypatch):
+    cube = pv.Cube()
+    sphere = pv.Sphere(radius=0.5)
+    _ = sphere.manifold.to_manifold()
+
+    calls = 0
+    original_to_manifold = accessor_module.to_manifold
+
+    def _counting_to_manifold(
+        mesh: pv.PolyData,
+        *,
+        point_data_keys: tuple[str, ...] | list[str] | None = None,
+        clean: bool = True,
+    ) -> manifold3d.Manifold:
+        nonlocal calls
+        calls += 1
+        return original_to_manifold(mesh, point_data_keys=point_data_keys, clean=clean)
+
+    monkeypatch.setattr(accessor_module, 'to_manifold', _counting_to_manifold)
+
+    _ = cube.manifold.difference(sphere)
+
+    assert calls == 1
 
 
 def test_difference():
@@ -104,6 +154,11 @@ def test_scale_anisotropic():
     cube = pv.Cube()
     s = cube.manifold.scale((2.0, 3.0, 4.0))
     np.testing.assert_allclose(s.volume, 24.0, rtol=1e-4)
+
+
+def test_scale_rejects_wrong_length():
+    with pytest.raises(ValueError, match='3 elements'):
+        pv.Cube().manifold.scale((2.0, 3.0))
 
 
 def test_mirror():

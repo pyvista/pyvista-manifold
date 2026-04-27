@@ -32,7 +32,7 @@ def test_to_manifold_triangulates_quads():
 def test_to_manifold_rejects_non_polydata():
     grid = pv.ImageData(dimensions=(5, 5, 5))
     with pytest.raises(TypeError, match=r'Expected pyvista\.PolyData'):
-        pvm.to_manifold(grid)  # type: ignore[arg-type]
+        pvm.to_manifold(grid)  # type: ignore[arg-type]  # runtime validation under test
 
 
 def test_to_manifold_empty():
