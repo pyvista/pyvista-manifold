@@ -34,7 +34,7 @@ def _cross_section_to_polydata(cs: manifold3d.CrossSection, *, z: float = 0.0) -
         return pv.PolyData()
     contours = cs.to_polygons()
     points: list[np.ndarray] = []
-    lines: list[np.ndarray] = []
+    lines: list[list[int]] = []
     offset = 0
     for contour in contours:
         contour = np.asarray(contour, dtype=np.float64)
@@ -43,8 +43,7 @@ def _cross_section_to_polydata(cs: manifold3d.CrossSection, *, z: float = 0.0) -
             continue
         pts3d = np.column_stack([contour, np.full(n, z)])
         points.append(pts3d)
-        line = np.append(np.arange(offset, offset + n, dtype=pv.ID_TYPE), offset)
-        lines.append(line)
+        lines.append([*range(offset, offset + n), offset])
         offset += n
     if not points:
         return pv.PolyData()
