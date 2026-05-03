@@ -126,6 +126,33 @@ class ManifoldAccessor:
             return self._default_manifold()
         return to_manifold(self._mesh, point_data_keys=point_data_keys, clean=clean)
 
+    @staticmethod
+    def from_manifold(
+        manifold: manifold3d.Manifold,
+        *,
+        property_names: Sequence[str] | None = None,
+    ) -> pv.PolyData:
+        """Build a :class:`pyvista.PolyData` from a :class:`~manifold3d.Manifold`.
+
+        Mirrors :func:`pyvista_manifold.from_manifold`; exposed on the
+        accessor so it is reachable as ``pv.PolyData.manifold.from_manifold(m)``
+        without importing the module-level function.
+
+        Parameters
+        ----------
+        manifold : manifold3d.Manifold
+            Source Manifold.
+        property_names : sequence of str, optional
+            See :func:`pyvista_manifold.from_manifold`.
+
+        Returns
+        -------
+        pyvista.PolyData
+            The PolyData representation.
+
+        """
+        return from_manifold(manifold, property_names=property_names)
+
     # ------------------------------------------------------------------
     # Boolean operations
     # ------------------------------------------------------------------

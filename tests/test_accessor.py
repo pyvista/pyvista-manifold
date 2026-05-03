@@ -23,6 +23,38 @@ def test_accessor_to_manifold():
     assert isinstance(m, manifold3d.Manifold)
 
 
+def test_accessor_from_manifold_classmethod_style():
+    cube = pv.Cube().triangulate()
+    m = cube.manifold.to_manifold()
+    poly = pv.PolyData.manifold.from_manifold(m)
+    assert isinstance(poly, pv.PolyData)
+    assert poly.n_points == m.num_vert()
+    assert poly.n_cells == m.num_tri()
+
+
+def test_accessor_from_manifold_instance_access():
+    cube = pv.Cube().triangulate()
+    m = cube.manifold.to_manifold()
+    poly = cube.manifold.from_manifold(m)
+    assert isinstance(poly, pv.PolyData)
+    assert poly.n_points == m.num_vert()
+
+
+def test_accessor_from_manifold_property_names():
+    cube = pv.Cube().triangulate()
+    cube.point_data['scalar'] = np.arange(cube.n_points, dtype=float)
+    m = cube.manifold.to_manifold(point_data_keys=['scalar'])
+    poly = pv.PolyData.manifold.from_manifold(m, property_names=['scalar'])
+    assert 'scalar' in poly.point_data
+    assert 'property_0' not in poly.point_data
+
+
+def test_accessor_from_manifold_empty():
+    poly = pv.PolyData.manifold.from_manifold(manifold3d.Manifold())
+    assert isinstance(poly, pv.PolyData)
+    assert poly.n_points == 0
+
+
 def test_accessor_to_manifold_uses_default_cache():
     sphere = pv.Sphere()
     first = sphere.manifold.to_manifold()
