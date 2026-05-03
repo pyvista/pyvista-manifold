@@ -6,7 +6,7 @@ A PyVista accessor for [Manifold](https://github.com/elalish/manifold), a fast a
   <img src="https://raw.githubusercontent.com/pyvista/pyvista-manifold/main/assets/gyroid.webp" alt="rotating gold gyroid TPMS sphere" width="520">
 </p>
 
-> A gyroid iso-surface intersected with a sphere, rendered in PBR gold. The whole solid was built in three function calls: `level_set` for the gyroid field, `pv.Sphere` for the trim, `mesh.manifold.intersection` to combine them.
+> Every frame is a real `tpms.manifold.intersection(sphere)` against a gyroid iso-surface — the wireframe is the live cutter, the gold is the result. Three function calls build the whole thing: `level_set` for the gyroid field, `pv.Sphere` for the cutter, `mesh.manifold.intersection` to combine them.
 
 ![pyvista-manifold examples banner](https://raw.githubusercontent.com/pyvista/pyvista-manifold/main/assets/banner.png)
 

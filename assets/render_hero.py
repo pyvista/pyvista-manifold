@@ -75,8 +75,10 @@ def _save_webp_animation(
     frames: list[np.ndarray],
     *,
     duration: int | list[int],
+    lossless: bool = True,
+    quality: int = 100,
 ) -> None:
-    """Write RGBA frames to a lossless animated WebP."""
+    """Write RGBA frames to an animated WebP."""
     pil_frames = [Image.fromarray(frame, mode='RGBA') for frame in frames]
     pil_frames[0].save(
         target,
@@ -85,8 +87,8 @@ def _save_webp_animation(
         append_images=pil_frames[1:],
         duration=duration,
         loop=0,
-        lossless=True,
-        quality=100,
+        lossless=lossless,
+        quality=quality,
         method=6,
     )
 
@@ -96,8 +98,10 @@ def _write_webp_animation(
     frames: list[np.ndarray],
     *,
     duration: int | list[int],
+    lossless: bool = True,
+    quality: int = 100,
 ) -> None:
-    _save_webp_animation(path, frames, duration=duration)
+    _save_webp_animation(path, frames, duration=duration, lossless=lossless, quality=quality)
 
 
 def gyroid(x: float, y: float, z: float, scale: float = 4.0) -> float:
@@ -258,43 +262,137 @@ def render_gyroid() -> None:
 
 
 def render_gyroid_animation() -> None:
-    """Hero animation: gold gyroid blob on a closed orbit for seamless looping."""
-    blob = _gyroid_blob()
+    """Hero animation: a sphere carves a gyroid TPMS field via real boolean ops.
+
+    Three phases that compose into a seamless loop:
+      1. ``carve``   -- sphere radius grows from 0 to r_max; each frame is a
+                        live ``tpms.manifold.intersection(sphere)``. Sphere
+                        renders as a faint wireframe so the cutter is legible.
+      2. ``orbit``   -- camera does a full 360 around the finished result;
+                        the cutter fades out so the gold solid stands alone.
+      3. ``uncarve`` -- sphere shrinks back to nothing, returning to the
+                        start frame.
+    """
+    tpms = level_set(
+        lambda x, y, z: gyroid(x, y, z, scale=2.0),
+        bounds=(-3, -3, -3, 3, 3, 3),
+        edge_length=0.04,
+    )
+    # Warm the manifold cache once so per-frame booleans only pay for the op.
+    tpms.manifold.to_manifold()
+
+    r_max = 2.6
+    r_min = 0.45  # smallest visible cutter; avoids "blank" carve/uncarve frames
+    n_carve = 20
+    n_orbit = 48
+    n_uncarve = 14
+    fps = 24
+    frame_duration = round(1000 / fps)
 
     pl = pv.Plotter()
     pl.window_size = [560, 560]
     _setup_pbr(pl)
+
+    # Keep an invisible full-size sphere in the scene the whole time so the
+    # bounds (and therefore the camera framing) never change as the result
+    # mesh grows and shrinks across frames.
     pl.add_mesh(
-        blob,
-        color='#d8a23c',
-        pbr=True,
-        metallic=0.7,
-        roughness=0.25,
-        smooth_shading=True,
-        split_sharp_edges=True,
+        pv.Sphere(radius=r_max),
+        opacity=0.0,
+        reset_camera=False,
+        pickable=False,
     )
     pl.camera_position = 'iso'
     pl.camera.zoom(1.25)
-
-    n_steps = 60
-    fps = 22
-    frame_duration = round(1000 / fps)
-    frames: list[np.ndarray] = []
     pl.render()
     focal_point = np.array(pl.camera.focal_point)
     base_position = np.array(pl.camera.position) - focal_point
     base_up = np.array(pl.camera.up)
-    for angle in np.linspace(0.0, 360.0, n_steps + 1):
-        rotation = pv.Transform().rotate_z(angle).rotation_matrix
+
+    def set_camera_angle(angle_deg: float) -> None:
+        rotation = pv.Transform().rotate_z(angle_deg).rotation_matrix
         pl.camera.position = tuple(focal_point + rotation @ base_position)
         pl.camera.up = tuple(rotation @ base_up)
+
+    def smoothstep(t: float) -> float:
+        return t * t * (3.0 - 2.0 * t)
+
+    frames: list[np.ndarray] = []
+
+    transient_actors: list = []
+
+    def render_frame(radius: float, angle: float, cutter_opacity: float) -> None:
+        for a in transient_actors:
+            pl.remove_actor(a, render=False)
+        transient_actors.clear()
+        if radius > 1e-3:
+            sphere = pv.Sphere(radius=radius, theta_resolution=96, phi_resolution=96)
+            result = tpms.manifold.intersection(sphere)
+            if result.n_points > 0:
+                transient_actors.append(
+                    pl.add_mesh(
+                        result,
+                        color='#d8a23c',
+                        pbr=True,
+                        metallic=0.7,
+                        roughness=0.25,
+                        smooth_shading=True,
+                        split_sharp_edges=True,
+                        reset_camera=False,
+                    ),
+                )
+            if cutter_opacity > 1e-3:
+                transient_actors.append(
+                    pl.add_mesh(
+                        sphere,
+                        color='#ffffff',
+                        style='wireframe',
+                        line_width=1.0,
+                        opacity=cutter_opacity,
+                        lighting=False,
+                        reset_camera=False,
+                    ),
+                )
+        set_camera_angle(angle)
         pl.render()
-        frame = pl.screenshot(None, return_img=True, transparent_background=True)
-        frames.append(frame)
+        frames.append(pl.screenshot(None, return_img=True, transparent_background=True))
+
+    # Phase 1: carve. Sphere grows; cutter wireframe visible throughout.
+    for i in range(1, n_carve + 1):
+        t = i / n_carve
+        radius = r_min + smoothstep(t) * (r_max - r_min)
+        cutter = 0.35 * (1.0 - 0.5 * t)  # fade slightly as the result fills in
+        render_frame(radius, 0.0, cutter)
+
+    # Phase 2: orbit. Full sphere; cutter fades fully out over the first
+    # quarter, fades back in over the last quarter so phase 3 picks it up.
+    for i in range(n_orbit):
+        angle = (i / n_orbit) * 360.0
+        if i < n_orbit // 4:
+            cutter = 0.18 * (1.0 - i / (n_orbit // 4))
+        elif i >= 3 * n_orbit // 4:
+            j = i - 3 * n_orbit // 4
+            cutter = 0.18 * (j / (n_orbit // 4))
+        else:
+            cutter = 0.0
+        render_frame(r_max, angle, cutter)
+
+    # Phase 3: uncarve. Sphere shrinks back; cutter visible again.
+    for i in range(1, n_uncarve + 1):
+        t = 1.0 - i / n_uncarve
+        radius = r_min + smoothstep(t) * (r_max - r_min)
+        cutter = 0.35 * (0.5 + 0.5 * (1.0 - t))
+        render_frame(radius, 0.0, cutter)
 
     pl.close()
-    durations = [frame_duration] * n_steps + [1]
-    _write_webp_animation(ASSETS / 'gyroid.webp', frames, duration=durations)
+    durations = [frame_duration] * len(frames)
+    _write_webp_animation(
+        ASSETS / 'gyroid.webp',
+        frames,
+        duration=durations,
+        lossless=False,
+        quality=88,
+    )
 
 
 def render_banner() -> None:
