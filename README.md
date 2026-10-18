@@ -225,7 +225,7 @@ Per-vertex point arrays can be passed through Manifold as extra property channel
 
 - **Inputs must be manifold solids** (closed, non-self-intersecting). Run `pv.PolyData.clean()` and check `mesh.manifold.is_valid` if you're unsure. PyVista's downloaded example meshes vary: `download_cow`, `download_horse`, `download_armadillo` are manifold; `download_bunny` (the Stanford scan) is not.
 - **All faces are triangulated and merged** during conversion. The roundtrip preserves vertex coordinates for triangulated, deduplicated input but does not preserve cell-data arrays.
-- **Coordinates are `float32`** inside Manifold. For double precision, call `to_manifold().to_mesh64()` directly.
+- **Output points and point-data property arrays are `float64`**: conversion goes through Manifold's `Mesh64` in both directions, so meshes far from the origin keep their precision.
 - **Manifold has no built-in I/O.** Use PyVista's readers and writers on the resulting PolyData.
 
 ## Development

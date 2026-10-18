@@ -353,7 +353,7 @@ class ManifoldAccessor:
             The transformed mesh.
 
         """
-        m = np.ascontiguousarray(matrix, dtype=np.float32)
+        m = np.ascontiguousarray(matrix, dtype=np.float64)
         if m.shape != (3, 4):
             msg = f'transform matrix must be (3, 4), got {m.shape}.'
             raise ValueError(msg)
@@ -507,7 +507,7 @@ class ManifoldAccessor:
 
         """
         m = self.to_manifold().calculate_normals(normal_idx, min_sharp_angle=min_sharp_angle)
-        poly, vert_props = _polydata_from_mesh_data(m.to_mesh())
+        poly, vert_props = _polydata_from_mesh_data(m.to_mesh64())
         start = 3 + normal_idx
         poly.point_data['Normals'] = np.ascontiguousarray(vert_props[:, start : start + 3])
         return poly
@@ -537,7 +537,7 @@ class ManifoldAccessor:
 
         """
         m = self.to_manifold().calculate_curvature(gaussian_idx, mean_idx)
-        poly, vert_props = _polydata_from_mesh_data(m.to_mesh())
+        poly, vert_props = _polydata_from_mesh_data(m.to_mesh64())
         poly.point_data['GaussianCurvature'] = np.ascontiguousarray(
             vert_props[:, 3 + gaussian_idx]
         )

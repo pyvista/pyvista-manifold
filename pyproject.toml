@@ -28,7 +28,7 @@ classifiers = [
   'Typing :: Typed',
 ]
 keywords = ['3d', 'pyvista', 'manifold', 'mesh', 'csg', 'boolean', 'geometry']
-dependencies = ['manifold3d>=3.0', 'numpy>=1.24', 'pyvista>=0.48']
+dependencies = ['manifold3d>=3.4', 'numpy>=1.24', 'pyvista>=0.48']
 
 [project.optional-dependencies]
 dev = [
