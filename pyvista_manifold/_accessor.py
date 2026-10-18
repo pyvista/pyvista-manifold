@@ -7,13 +7,20 @@ do not normally need to import it directly.
 
 import atexit
 from collections.abc import Callable, Iterable, Sequence
+import operator
+import warnings
 import weakref
 
 import manifold3d
 import numpy as np
 import pyvista as pv
 
-from pyvista_manifold._conversion import _polydata_from_mesh_data, from_manifold, to_manifold
+from pyvista_manifold._conversion import (
+    _polydata_from_mesh_data,
+    _to_manifold,
+    from_manifold,
+    to_manifold,
+)
 
 _LIVE_ACCESSORS: weakref.WeakSet = weakref.WeakSet()
 
@@ -26,6 +33,48 @@ def _coerce_manifold(obj: pv.PolyData | manifold3d.Manifold) -> manifold3d.Manif
         return obj.manifold._valid_manifold()
     msg = f'Expected pyvista.PolyData or manifold3d.Manifold, got {type(obj).__name__}.'
     raise TypeError(msg)
+
+
+def _boolean(
+    mesh: pv.PolyData,
+    other: pv.PolyData | manifold3d.Manifold,
+    op: Callable[[manifold3d.Manifold, manifold3d.Manifold], manifold3d.Manifold],
+) -> pv.PolyData:
+    """Apply a binary Boolean, carrying the cell arrays both inputs hold.
+
+    Each output triangle takes the values of the input cell it was cut from.
+    """
+    names = []
+    if isinstance(other, pv.PolyData):
+        names = sorted(set(mesh.cell_data.keys()) & set(other.cell_data.keys()))
+    if not isinstance(other, pv.PolyData) or not names:
+        return from_manifold(op(mesh.manifold._valid_manifold(), _coerce_manifold(other)))
+
+    # Distinct face IDs per source cell stop Manifold merging coplanar
+    # triangles across cells, so tag only when there is data to carry.
+    tagged = [_to_manifold(mesh, first_face_id=0), _to_manifold(other, first_face_id=mesh.n_cells)]
+    for manifold in tagged:
+        reason = _invalid_reason(manifold)
+        if reason is not None:
+            raise ValueError(reason)
+    result = op(*tagged)
+    if result.is_empty():
+        return pv.PolyData()
+    mesh_data = result.to_mesh64()
+    out, _ = _polydata_from_mesh_data(mesh_data)
+    face_id = np.asarray(mesh_data.face_id, dtype=np.int64)
+    dropped = []
+    for name in names:
+        try:
+            values = np.concatenate([np.asarray(poly.cell_data[name]) for poly in (mesh, other)])
+        except (TypeError, ValueError):  # differing component counts, or text against numbers
+            dropped.append(name)
+            continue
+        out.cell_data[name] = values[face_id]
+    if dropped:
+        msg = f'Cell arrays {dropped} differ in shape or type between the inputs; not carried.'
+        warnings.warn(msg, UserWarning, stacklevel=3)
+    return out
 
 
 def _invalid_reason(manifold: manifold3d.Manifold) -> str | None:
@@ -187,6 +236,11 @@ class ManifoldAccessor:
     def union(self, other: pv.PolyData | manifold3d.Manifold) -> pv.PolyData:
         """Union with another solid.
 
+        Cell arrays both inputs hold are carried: each output face takes the
+        values of the cell it came from, and vector arrays such as normals
+        are copied as-is. While arrays are carried, faces from distinct
+        source cells are not merged, so the output can have more triangles.
+
         Parameters
         ----------
         other : pyvista.PolyData or manifold3d.Manifold
@@ -198,10 +252,16 @@ class ManifoldAccessor:
             The union result.
 
         """
-        return from_manifold(self._valid_manifold() + _coerce_manifold(other))
+        return _boolean(self._mesh, other, operator.add)
 
     def difference(self, other: pv.PolyData | manifold3d.Manifold) -> pv.PolyData:
         """Subtract ``other`` from this mesh.
+
+        Cell arrays both inputs hold are carried: each output face takes the
+        values of the cell it came from, and vector arrays are copied as-is.
+        Faces taken from ``other`` are reversed, so recompute normals. While
+        arrays are carried, faces from distinct source cells are not merged,
+        so the output can have more triangles.
 
         Parameters
         ----------
@@ -214,10 +274,15 @@ class ManifoldAccessor:
             The difference result.
 
         """
-        return from_manifold(self._valid_manifold() - _coerce_manifold(other))
+        return _boolean(self._mesh, other, operator.sub)
 
     def intersection(self, other: pv.PolyData | manifold3d.Manifold) -> pv.PolyData:
         """Intersect this mesh with ``other``.
+
+        Cell arrays both inputs hold are carried: each output face takes the
+        values of the cell it came from, and vector arrays such as normals
+        are copied as-is. While arrays are carried, faces from distinct
+        source cells are not merged, so the output can have more triangles.
 
         Parameters
         ----------
@@ -230,7 +295,7 @@ class ManifoldAccessor:
             The intersection result.
 
         """
-        return from_manifold(self._valid_manifold() ^ _coerce_manifold(other))
+        return _boolean(self._mesh, other, operator.xor)
 
     def batch_boolean(
         self,

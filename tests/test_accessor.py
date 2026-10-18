@@ -130,6 +130,75 @@ def test_intersection():
     np.testing.assert_allclose(inter.volume, 0.125, rtol=1e-4)
 
 
+def _with_planes(mesh: pv.PolyData, source: int) -> pv.PolyData:
+    mesh = mesh.triangulate()
+    tri = mesh.points[mesh.regular_faces].astype(np.float64)
+    normal = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    normal /= np.linalg.norm(normal, axis=1, keepdims=True)
+    offset = np.einsum('ij,ij->i', normal, tri[:, 0])
+    mesh.cell_data['plane'] = np.column_stack([normal, offset])
+    mesh.cell_data['source'] = np.full(mesh.n_cells, source)
+    return mesh
+
+
+def _assert_on_carried_planes(out: pv.PolyData) -> None:
+    # Every output triangle lies in the input cell whose values it carries.
+    plane = out.cell_data['plane'][:, None, :]
+    tri = out.points[out.regular_faces]
+    distance = np.einsum('ijk,ijk->ij', tri, plane[..., :3]) - plane[..., 3]
+    np.testing.assert_allclose(distance, 0.0, atol=1e-9)
+
+
+@pytest.mark.parametrize('op', ['union', 'difference', 'intersection'])
+def test_boolean_carries_cell_data(op):
+    a = _with_planes(pv.Cube(), 0)
+    b = _with_planes(pv.Sphere(radius=0.6, center=(0.5, 0.5, 0.5)), 1)
+    out = getattr(a.manifold, op)(b)
+    assert set(np.unique(out.cell_data['source'])) == {0, 1}
+    _assert_on_carried_planes(out)
+    assert 'FaceIndex' not in out.cell_data  # on the cube only
+    assert sorted(a.cell_data.keys()) == ['FaceIndex', 'plane', 'source']
+
+
+def test_boolean_carries_cell_data_past_a_degenerate_cell():
+    cube = _with_planes(pv.Cube(), 0)
+    # Append a collapsed triangle, which clean() turns into a line cell.
+    mesh = pv.PolyData(cube.points, faces=np.hstack([cube.faces, [3, 0, 1, 1]]))
+    mesh.cell_data['plane'] = np.vstack([cube.cell_data['plane'], [0.0, 0.0, 0.0, 99.0]])
+    mesh.cell_data['source'] = np.append(cube.cell_data['source'], 2)
+    b = _with_planes(pv.Sphere(radius=0.6, center=(0.5, 0.5, 0.5)), 1)
+    out = mesh.manifold.union(b)
+    assert set(np.unique(out.cell_data['source'])) == {0, 1}
+    _assert_on_carried_planes(out)
+
+
+def test_boolean_warns_on_cell_data_it_cannot_carry():
+    a = _with_planes(pv.Cube(), 0)
+    b = _with_planes(pv.Sphere(radius=0.6, center=(0.5, 0.5, 0.5)), 1)
+    a.cell_data['mixed'] = np.zeros(a.n_cells)
+    b.cell_data['mixed'] = np.zeros((b.n_cells, 3))
+    with pytest.warns(UserWarning, match=r"\['mixed'\] differ in shape or type"):
+        out = a.manifold.union(b)
+    assert sorted(out.cell_data.keys()) == ['plane', 'source']
+    assert not a.manifold.union(pvm.to_manifold(b)).cell_data.keys()
+
+
+def test_boolean_carrying_cell_data_still_validates():
+    a = _with_planes(pv.Cube(), 0).flip_faces()
+    b = _with_planes(pv.Sphere(radius=0.6, center=(0.5, 0.5, 0.5)), 1)
+    with pytest.raises(ValueError, match='inside out'):
+        a.manifold.union(b)
+    with pytest.raises(ValueError, match='inside out'):
+        b.manifold.difference(a)
+
+
+def test_boolean_without_cell_data_keeps_merging_coplanar_faces():
+    a = pv.Box(level=4)
+    b = pv.Box(level=4).translate((0.3, 0.3, 0.3))
+    plain = pvm.from_manifold(pvm.to_manifold(a) + pvm.to_manifold(b))
+    assert a.manifold.union(b).n_cells == plain.n_cells
+
+
 def test_difference_accepts_manifold_directly():
     a = pv.Cube(x_length=2.0, y_length=2.0, z_length=2.0)
     b_m = pvm.to_manifold(pv.Sphere(radius=0.7))

@@ -7,6 +7,9 @@ import numpy as np
 import numpy.typing as npt
 import pyvista as pv
 
+# Cell array ``_to_manifold`` adds to its own copy of a mesh to tag triangles.
+_FACE_ID = '_pyvista_manifold_face_id'
+
 
 def _as_contiguous_array(array: npt.ArrayLike, *, dtype: npt.DTypeLike) -> np.ndarray:
     """Return ``array`` as a contiguous NumPy array with the requested dtype."""
@@ -60,6 +63,21 @@ def to_manifold(
         The Manifold representation of the input mesh.
 
     """
+    return _to_manifold(mesh, point_data_keys=point_data_keys, clean=clean)
+
+
+def _to_manifold(
+    mesh: pv.PolyData,
+    *,
+    point_data_keys: Sequence[str] | None = None,
+    clean: bool = True,
+    first_face_id: int | None = None,
+) -> manifold3d.Manifold:
+    """Convert ``mesh``; with ``first_face_id``, tag each triangle with its source cell.
+
+    The tag is ``first_face_id`` plus the index of the input cell the triangle
+    came from, and survives Manifold operations as the output ``face_id``.
+    """
     if not isinstance(mesh, pv.PolyData):
         msg = f'Expected pyvista.PolyData, got {type(mesh).__name__}.'
         raise TypeError(msg)
@@ -67,7 +85,15 @@ def to_manifold(
     if mesh.n_points == 0:
         return manifold3d.Manifold()
 
-    pd = mesh.clean() if clean else mesh
+    pd = mesh
+    if first_face_id is not None:
+        pd = mesh.copy(deep=False)
+        pd.cell_data[_FACE_ID] = np.arange(first_face_id, first_face_id + mesh.n_cells)
+    pd = pd.clean() if clean else pd
+    if pd.n_verts or pd.n_lines:
+        # Vertex and line cells (e.g. a triangle ``clean`` collapsed) come
+        # first; drop them so the cell data stays aligned with the triangles.
+        pd = pd.remove_cells(np.arange(pd.n_verts + pd.n_lines))
     if not pd.is_all_triangles:
         pd = pd.triangulate()
     vertices = _as_contiguous_array(pd.points, dtype=np.dtype(np.float64))
@@ -93,7 +119,10 @@ def to_manifold(
     else:
         vert_props = vertices
 
-    mesh_data = manifold3d.Mesh64(vert_properties=vert_props, tri_verts=tri_verts)
+    face_id = None
+    if first_face_id is not None:
+        face_id = _as_contiguous_array(pd.cell_data[_FACE_ID], dtype=np.dtype(np.uint64))
+    mesh_data = manifold3d.Mesh64(vert_properties=vert_props, tri_verts=tri_verts, face_id=face_id)
     return manifold3d.Manifold(mesh_data)
 
 
