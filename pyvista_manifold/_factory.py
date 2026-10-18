@@ -158,7 +158,7 @@ def hull_points(points: np.ndarray) -> pv.PolyData:
         The hull as a triangulated PolyData.
 
     """
-    pts = np.ascontiguousarray(points, dtype=np.float32)
+    pts = np.ascontiguousarray(points, dtype=np.float64)
     if pts.ndim != 2 or pts.shape[1] != 3:
         msg = f'points must be (N, 3), got shape {pts.shape}.'
         raise ValueError(msg)
@@ -170,16 +170,16 @@ def _polygons_to_cross_section(
     fill_rule: manifold3d.FillRule,
 ) -> manifold3d.CrossSection:
     """Coerce assorted 2D-polygon inputs into a CrossSection."""
-    arr = np.asarray(polygons, dtype=np.float32)
+    arr = np.asarray(polygons, dtype=np.float64)
     if arr.ndim == 2 and arr.shape[1] == 2:
         contours = [arr]
     elif arr.ndim == 3 and arr.shape[2] == 2:
-        contours = [np.ascontiguousarray(c, dtype=np.float32) for c in arr]
+        contours = [np.ascontiguousarray(c, dtype=np.float64) for c in arr]
     else:
         if isinstance(polygons, np.ndarray):
             msg = f'polygons must be (N, 2) or (M, N, 2), got shape {polygons.shape}.'
             raise ValueError(msg)
-        contours = [np.ascontiguousarray(np.asarray(c, dtype=np.float32)) for c in polygons]
+        contours = [np.ascontiguousarray(np.asarray(c, dtype=np.float64)) for c in polygons]
         for c in contours:
             if c.ndim != 2 or c.shape[1] != 2:
                 msg = f'each polygon must be (N, 2), got shape {c.shape}.'

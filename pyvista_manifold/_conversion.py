@@ -16,7 +16,7 @@ def _as_contiguous_array(array: npt.ArrayLike, *, dtype: npt.DTypeLike) -> np.nd
     return np.ascontiguousarray(contiguous_array)
 
 
-def _polydata_from_mesh_data(mesh_data: manifold3d.Mesh) -> tuple[pv.PolyData, np.ndarray]:
+def _polydata_from_mesh_data(mesh_data: manifold3d.Mesh64) -> tuple[pv.PolyData, np.ndarray]:
     """Build ``PolyData`` geometry from a Manifold mesh export."""
     vert_props = np.asarray(mesh_data.vert_properties)
     tri_verts = _as_contiguous_array(mesh_data.tri_verts, dtype=np.dtype(pv.ID_TYPE))
@@ -70,13 +70,13 @@ def to_manifold(
     pd = mesh.clean() if clean else mesh
     if not pd.is_all_triangles:
         pd = pd.triangulate()
-    vertices = _as_contiguous_array(pd.points, dtype=np.dtype(np.float32))
-    tri_verts = _as_contiguous_array(pd.regular_faces, dtype=np.dtype(np.uint32))
+    vertices = _as_contiguous_array(pd.points, dtype=np.dtype(np.float64))
+    tri_verts = _as_contiguous_array(pd.regular_faces, dtype=np.dtype(np.uint64))
 
     if point_data_keys:
         cols: list[np.ndarray] = [vertices]
         for key in point_data_keys:
-            arr = _as_contiguous_array(pd.point_data[key], dtype=np.dtype(np.float32))
+            arr = _as_contiguous_array(pd.point_data[key], dtype=np.dtype(np.float64))
             if arr.ndim == 1:
                 arr = arr.reshape(-1, 1)
             elif arr.ndim != 2:
@@ -93,7 +93,7 @@ def to_manifold(
     else:
         vert_props = vertices
 
-    mesh_data = manifold3d.Mesh(vert_properties=vert_props, tri_verts=tri_verts)
+    mesh_data = manifold3d.Mesh64(vert_properties=vert_props, tri_verts=tri_verts)
     return manifold3d.Manifold(mesh_data)
 
 
@@ -125,7 +125,7 @@ def from_manifold(
     if manifold.is_empty():
         return pv.PolyData()
 
-    poly, vert_props = _polydata_from_mesh_data(manifold.to_mesh())
+    poly, vert_props = _polydata_from_mesh_data(manifold.to_mesh64())
 
     extra = vert_props[:, 3:]
     if extra.shape[1] > 0:
