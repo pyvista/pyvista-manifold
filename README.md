@@ -95,7 +95,7 @@ mesh.manifold.<operation>(...)     # any method below; always returns pv.PolyDat
 
 The conversion runs `pyvista.PolyData.clean()` and triangulates the input by default, so PyVista primitives like `pv.Cube` and `pv.Cylinder` (which ship with seam-duplicated vertices) work directly. Pass `clean=False` to `mesh.manifold.to_manifold()` if you need to preserve every input vertex.
 
-If your mesh isn't a closed manifold solid, the conversion still returns a `Manifold`, but downstream operations may misbehave. Check `mesh.manifold.is_valid` (returns `True` when Manifold's status is `NoError`).
+If your mesh isn't a closed, outward-facing manifold solid, the conversion still returns a `Manifold`, but every accessor method that returns geometry raises a `ValueError` naming the cause, as does `min_gap`, which also requires valid solids. The other queries never raise: check `mesh.manifold.is_valid` (returns `True` when Manifold's status is `NoError` and the volume is not negative).
 
 ### Boolean operations
 

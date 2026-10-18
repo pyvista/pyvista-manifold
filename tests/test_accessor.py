@@ -348,6 +348,91 @@ def test_property_is_valid():
     assert pv.Cube().manifold.is_valid
 
 
+def _open_cup() -> pv.PolyData:
+    return pv.Sphere().clip('z')
+
+
+def _cube_with_fin() -> pv.PolyData:
+    # A triangle hinged on one cube edge leaves three faces on that edge.
+    fin = pv.PolyData([[0.5, 0.5, -0.5], [0.5, 0.5, 0.5], [1.5, 1.5, 0.0]], faces=[3, 0, 1, 2])
+    return pv.Cube().triangulate().clean().merge(fin)
+
+
+def _inside_out_cube() -> pv.PolyData:
+    return pv.Cube().triangulate().clean().flip_faces()
+
+
+INVALID = pytest.mark.parametrize(
+    ('make', 'reason'),
+    [
+        (_open_cup, 'Manifold status: NotManifold'),
+        (_cube_with_fin, 'Manifold status: NotManifold'),
+        (_inside_out_cube, r'inside out: .*\(volume -1\)'),
+    ],
+    ids=['open', 'non_manifold', 'inside_out'],
+)
+
+
+@INVALID
+@pytest.mark.parametrize(
+    'op',
+    [
+        lambda m: m.manifold.difference(pv.Sphere(radius=0.3)),
+        lambda m: pv.Sphere(radius=0.3).manifold.union(m),
+        lambda m: pv.Sphere(radius=0.3).manifold.batch_boolean([m]),
+        lambda m: m.manifold.split(pv.Sphere(radius=0.3)),
+        lambda m: m.manifold.split_by_plane((0, 0, 1)),
+        lambda m: m.manifold.hull(),
+        lambda m: m.manifold.translate((1, 0, 0)),
+        lambda m: m.manifold.smooth_out(),
+        lambda m: m.manifold.simplify(0.01),
+        lambda m: m.manifold.minkowski_sum(pv.Sphere(radius=0.1)),
+        lambda m: m.manifold.decompose(),
+        lambda m: m.manifold.slice_z(0.1),
+        lambda m: m.manifold.project(),
+    ],
+    ids=[
+        'difference',
+        'other',
+        'batch',
+        'split',
+        'split_by_plane',
+        'hull',
+        'translate',
+        'smooth_out',
+        'simplify',
+        'minkowski_sum',
+        'decompose',
+        'slice_z',
+        'project',
+    ],
+)
+def test_invalid_input_raises_on_geometry(make, reason, op):
+    with pytest.raises(ValueError, match=reason):
+        op(make())
+
+
+@INVALID
+def test_invalid_input_queries_do_not_raise(make, reason):
+    mesh = make()
+    acc = mesh.manifold
+    for query in ('bounds', 'num_vert', 'num_tri', 'num_edge', 'is_empty', 'surface_area'):
+        getattr(acc, query)
+    _ = (acc.genus, acc.tolerance, acc.volume, acc.original_id)
+    assert not acc.is_valid
+    assert (acc.status == manifold3d.Error.NoError) == ('inside out' in reason)
+    assert pvm.to_manifold(mesh).status() == acc.status  # module level stays raw
+
+
+def test_validity_follows_in_place_mutation():
+    cube = pv.Cube().triangulate().clean()
+    assert cube.manifold.is_valid
+    cube.flip_faces(inplace=True)
+    assert not cube.manifold.is_valid
+    with pytest.raises(ValueError, match='inside out'):
+        cube.manifold.hull()
+
+
 def test_property_num_counts():
     cube = pv.Cube()
     assert cube.manifold.num_vert > 0
