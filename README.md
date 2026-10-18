@@ -46,21 +46,23 @@ diff = cube.manifold.difference(sphere)
 print(diff.manifold.volume, diff.manifold.is_valid)
 
 # Drill three orthogonal cylinders out of a cube in one call
-holes = [
-    pv.Cylinder(radius=0.4, height=3, direction=d)
-    for d in [(1, 0, 0), (0, 1, 0), (0, 0, 1)]
-]
+holes = [pv.Cylinder(radius=0.4, height=3, direction=d) for d in [(1, 0, 0), (0, 1, 0), (0, 0, 1)]]
 from pyvista_manifold import OpType
+
 drilled = cube.manifold.batch_boolean(holes, op=OpType.Subtract)
 
 # Intersect with an iso-surface from a callable scalar field
 import math
 from pyvista_manifold import level_set
 
+
 def gyroid(x, y, z):
-    return -(math.sin(2*x)*math.cos(2*y)
-             + math.sin(2*y)*math.cos(2*z)
-             + math.sin(2*z)*math.cos(2*x))
+    return -(
+        math.sin(2 * x) * math.cos(2 * y)
+        + math.sin(2 * y) * math.cos(2 * z)
+        + math.sin(2 * z) * math.cos(2 * x)
+    )
+
 
 iso = level_set(gyroid, bounds=(-2, -2, -2, 2, 2, 2), edge_length=0.1)
 infilled = pv.Sphere(radius=1.5).manifold.intersection(iso)
@@ -214,7 +216,7 @@ import pyvista as pv
 from pyvista_manifold import to_manifold, from_manifold
 
 m = to_manifold(polydata, point_data_keys=['scalar'])  # PolyData -> Manifold
-poly = from_manifold(m, property_names=['scalar'])     # Manifold -> PolyData
+poly = from_manifold(m, property_names=['scalar'])  # Manifold -> PolyData
 ```
 
 Per-vertex point arrays can be passed through Manifold as extra property channels via `point_data_keys`. Manifold linearly interpolates them across boolean cuts, and `from_manifold` unpacks them back into `point_data`.
