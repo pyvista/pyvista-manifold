@@ -23,9 +23,26 @@ def _coerce_manifold(obj: pv.PolyData | manifold3d.Manifold) -> manifold3d.Manif
     if isinstance(obj, manifold3d.Manifold):
         return obj
     if isinstance(obj, pv.PolyData):
-        return obj.manifold.to_manifold()
+        return obj.manifold._valid_manifold()
     msg = f'Expected pyvista.PolyData or manifold3d.Manifold, got {type(obj).__name__}.'
     raise TypeError(msg)
+
+
+def _invalid_reason(manifold: manifold3d.Manifold) -> str | None:
+    """Say why ``manifold`` is not a closed, outward-oriented solid, or ``None``."""
+    status = manifold.status()
+    if status != manifold3d.Error.NoError:
+        return (
+            'Input is not a closed, oriented 2-manifold solid '
+            f'(Manifold status: {status.name}). Close and merge it first.'
+        )
+    volume = manifold.volume()
+    if volume < 0:
+        return (
+            f'Input is inside out: its faces point inward (volume {volume:g}). '
+            'Reverse them with flip_faces().'
+        )
+    return None
 
 
 def _cross_section_to_polydata(cs: manifold3d.CrossSection, *, z: float = 0.0) -> pv.PolyData:
@@ -75,6 +92,7 @@ class ManifoldAccessor:
         self._mesh = mesh
         self._cached_manifold: manifold3d.Manifold | None = None
         self._cached_manifold_mtime: int | None = None
+        self._cached_error: str | None = None
         _LIVE_ACCESSORS.add(self)
 
     # ------------------------------------------------------------------
@@ -94,12 +112,21 @@ class ManifoldAccessor:
         if self._cached_manifold_mtime != current_mtime or self._cached_manifold is None:
             self._cached_manifold = to_manifold(self._mesh)
             self._cached_manifold_mtime = current_mtime
+            self._cached_error = _invalid_reason(self._cached_manifold)
         return self._cached_manifold
+
+    def _valid_manifold(self) -> manifold3d.Manifold:
+        """Return the cached conversion, raising if it is not a valid solid."""
+        manifold = self._default_manifold()
+        if self._cached_error is not None:
+            raise ValueError(self._cached_error)
+        return manifold
 
     def _clear_cached_manifold(self) -> None:
         """Drop any cached Manifold wrapper held by this accessor."""
         self._cached_manifold = None
         self._cached_manifold_mtime = None
+        self._cached_error = None
 
     def to_manifold(
         self,
@@ -171,7 +198,7 @@ class ManifoldAccessor:
             The union result.
 
         """
-        return from_manifold(self.to_manifold() + _coerce_manifold(other))
+        return from_manifold(self._valid_manifold() + _coerce_manifold(other))
 
     def difference(self, other: pv.PolyData | manifold3d.Manifold) -> pv.PolyData:
         """Subtract ``other`` from this mesh.
@@ -187,7 +214,7 @@ class ManifoldAccessor:
             The difference result.
 
         """
-        return from_manifold(self.to_manifold() - _coerce_manifold(other))
+        return from_manifold(self._valid_manifold() - _coerce_manifold(other))
 
     def intersection(self, other: pv.PolyData | manifold3d.Manifold) -> pv.PolyData:
         """Intersect this mesh with ``other``.
@@ -203,7 +230,7 @@ class ManifoldAccessor:
             The intersection result.
 
         """
-        return from_manifold(self.to_manifold() ^ _coerce_manifold(other))
+        return from_manifold(self._valid_manifold() ^ _coerce_manifold(other))
 
     def batch_boolean(
         self,
@@ -225,7 +252,7 @@ class ManifoldAccessor:
             The Boolean result.
 
         """
-        items = [self.to_manifold()] + [_coerce_manifold(o) for o in others]
+        items = [self._valid_manifold()] + [_coerce_manifold(o) for o in others]
         return from_manifold(manifold3d.Manifold.batch_boolean(items, op))
 
     # ------------------------------------------------------------------
@@ -241,7 +268,7 @@ class ManifoldAccessor:
             The convex hull.
 
         """
-        return from_manifold(self.to_manifold().hull())
+        return from_manifold(self._valid_manifold().hull())
 
     def hull_with(
         self,
@@ -260,7 +287,7 @@ class ManifoldAccessor:
             The combined hull.
 
         """
-        items = [self.to_manifold()] + [_coerce_manifold(o) for o in others]
+        items = [self._valid_manifold()] + [_coerce_manifold(o) for o in others]
         return from_manifold(manifold3d.Manifold.batch_hull(items))
 
     # ------------------------------------------------------------------
@@ -281,7 +308,7 @@ class ManifoldAccessor:
             The translated mesh.
 
         """
-        return from_manifold(self.to_manifold().translate(tuple(t)))
+        return from_manifold(self._valid_manifold().translate(tuple(t)))
 
     def rotate(self, r: Sequence[float]) -> pv.PolyData:
         """Rotate using XYZ Euler angles in degrees.
@@ -297,7 +324,7 @@ class ManifoldAccessor:
             The rotated mesh.
 
         """
-        return from_manifold(self.to_manifold().rotate(tuple(r)))
+        return from_manifold(self._valid_manifold().rotate(tuple(r)))
 
     def scale(self, s: float | Sequence[float]) -> pv.PolyData:
         """Scale uniformly or per-axis.
@@ -321,7 +348,7 @@ class ManifoldAccessor:
                 msg = f'scale sequence must have 3 elements, got {len(vals)}.'
                 raise ValueError(msg)
             s_t = (vals[0], vals[1], vals[2])
-        return from_manifold(self.to_manifold().scale(s_t))
+        return from_manifold(self._valid_manifold().scale(s_t))
 
     def mirror(self, normal: Sequence[float]) -> pv.PolyData:
         """Mirror about a plane through the origin with the given normal.
@@ -337,7 +364,7 @@ class ManifoldAccessor:
             The mirrored mesh.
 
         """
-        return from_manifold(self.to_manifold().mirror(tuple(normal)))
+        return from_manifold(self._valid_manifold().mirror(tuple(normal)))
 
     def transform(self, matrix: np.ndarray) -> pv.PolyData:
         """Apply a 3x4 column-major affine transform.
@@ -357,7 +384,7 @@ class ManifoldAccessor:
         if m.shape != (3, 4):
             msg = f'transform matrix must be (3, 4), got {m.shape}.'
             raise ValueError(msg)
-        return from_manifold(self.to_manifold().transform(m))
+        return from_manifold(self._valid_manifold().transform(m))
 
     def warp(
         self,
@@ -382,7 +409,7 @@ class ManifoldAccessor:
             The warped mesh.
 
         """
-        m = self.to_manifold()
+        m = self._valid_manifold()
         warped = m.warp_batch(f) if batch else m.warp(f)
         return from_manifold(warped)
 
@@ -404,7 +431,7 @@ class ManifoldAccessor:
             The refined mesh.
 
         """
-        return from_manifold(self.to_manifold().refine(n))
+        return from_manifold(self._valid_manifold().refine(n))
 
     def refine_to_length(self, length: float) -> pv.PolyData:
         """Adaptively refine until every edge is shorter than ``length``.
@@ -420,7 +447,7 @@ class ManifoldAccessor:
             The refined mesh.
 
         """
-        return from_manifold(self.to_manifold().refine_to_length(length))
+        return from_manifold(self._valid_manifold().refine_to_length(length))
 
     def refine_to_tolerance(self, tolerance: float) -> pv.PolyData:
         """Refine until geometric error is below ``tolerance``.
@@ -436,7 +463,7 @@ class ManifoldAccessor:
             The refined mesh.
 
         """
-        return from_manifold(self.to_manifold().refine_to_tolerance(tolerance))
+        return from_manifold(self._valid_manifold().refine_to_tolerance(tolerance))
 
     def smooth_out(
         self,
@@ -460,7 +487,7 @@ class ManifoldAccessor:
 
         """
         return from_manifold(
-            self.to_manifold().smooth_out(
+            self._valid_manifold().smooth_out(
                 min_sharp_angle=min_sharp_angle,
                 min_smoothness=min_smoothness,
             ),
@@ -480,7 +507,7 @@ class ManifoldAccessor:
             The smoothed mesh.
 
         """
-        return from_manifold(self.to_manifold().smooth_by_normals(normal_idx))
+        return from_manifold(self._valid_manifold().smooth_by_normals(normal_idx))
 
     def calculate_normals(
         self,
@@ -506,7 +533,7 @@ class ManifoldAccessor:
             The mesh with a ``Normals`` (``N x 3``) point-data array.
 
         """
-        m = self.to_manifold().calculate_normals(normal_idx, min_sharp_angle=min_sharp_angle)
+        m = self._valid_manifold().calculate_normals(normal_idx, min_sharp_angle=min_sharp_angle)
         poly, vert_props = _polydata_from_mesh_data(m.to_mesh64())
         start = 3 + normal_idx
         poly.point_data['Normals'] = np.ascontiguousarray(vert_props[:, start : start + 3])
@@ -536,7 +563,7 @@ class ManifoldAccessor:
             point-data arrays.
 
         """
-        m = self.to_manifold().calculate_curvature(gaussian_idx, mean_idx)
+        m = self._valid_manifold().calculate_curvature(gaussian_idx, mean_idx)
         poly, vert_props = _polydata_from_mesh_data(m.to_mesh64())
         poly.point_data['GaussianCurvature'] = np.ascontiguousarray(
             vert_props[:, 3 + gaussian_idx]
@@ -567,7 +594,7 @@ class ManifoldAccessor:
             Portion of ``self`` outside ``cutter``.
 
         """
-        inside, outside = self.to_manifold().split(_coerce_manifold(cutter))
+        inside, outside = self._valid_manifold().split(_coerce_manifold(cutter))
         return from_manifold(inside), from_manifold(outside)
 
     def split_by_plane(
@@ -592,7 +619,7 @@ class ManifoldAccessor:
             Other half.
 
         """
-        pos, neg = self.to_manifold().split_by_plane(tuple(normal), offset)
+        pos, neg = self._valid_manifold().split_by_plane(tuple(normal), offset)
         return from_manifold(pos), from_manifold(neg)
 
     def trim_by_plane(
@@ -615,7 +642,7 @@ class ManifoldAccessor:
             Trimmed mesh.
 
         """
-        return from_manifold(self.to_manifold().trim_by_plane(tuple(normal), offset))
+        return from_manifold(self._valid_manifold().trim_by_plane(tuple(normal), offset))
 
     def decompose(self) -> list[pv.PolyData]:
         """Split into disconnected components.
@@ -626,7 +653,7 @@ class ManifoldAccessor:
             One PolyData per connected component.
 
         """
-        return [from_manifold(m) for m in self.to_manifold().decompose()]
+        return [from_manifold(m) for m in self._valid_manifold().decompose()]
 
     # ------------------------------------------------------------------
     # Minkowski
@@ -646,7 +673,7 @@ class ManifoldAccessor:
             The Minkowski sum.
 
         """
-        return from_manifold(self.to_manifold().minkowski_sum(_coerce_manifold(other)))
+        return from_manifold(self._valid_manifold().minkowski_sum(_coerce_manifold(other)))
 
     def minkowski_difference(
         self,
@@ -665,7 +692,7 @@ class ManifoldAccessor:
             The Minkowski difference.
 
         """
-        return from_manifold(self.to_manifold().minkowski_difference(_coerce_manifold(other)))
+        return from_manifold(self._valid_manifold().minkowski_difference(_coerce_manifold(other)))
 
     # ------------------------------------------------------------------
     # 3D → 2D
@@ -685,7 +712,7 @@ class ManifoldAccessor:
             Closed polylines at ``z`` describing the cross section.
 
         """
-        cs = self.to_manifold().slice(z)
+        cs = self._valid_manifold().slice(z)
         return _cross_section_to_polydata(cs, z=z)
 
     def project(self) -> pv.PolyData:
@@ -697,7 +724,7 @@ class ManifoldAccessor:
             Closed polylines at ``z = 0`` describing the silhouette.
 
         """
-        cs = self.to_manifold().project()
+        cs = self._valid_manifold().project()
         return _cross_section_to_polydata(cs, z=0.0)
 
     # ------------------------------------------------------------------
@@ -718,7 +745,7 @@ class ManifoldAccessor:
             Simplified mesh.
 
         """
-        return from_manifold(self.to_manifold().simplify(tolerance))
+        return from_manifold(self._valid_manifold().simplify(tolerance))
 
     def set_tolerance(self, tolerance: float) -> pv.PolyData:
         """Set the mesh's numerical tolerance, returning a new PolyData.
@@ -734,7 +761,7 @@ class ManifoldAccessor:
             Mesh with updated tolerance.
 
         """
-        return from_manifold(self.to_manifold().set_tolerance(tolerance))
+        return from_manifold(self._valid_manifold().set_tolerance(tolerance))
 
     def set_properties(
         self,
@@ -757,7 +784,7 @@ class ManifoldAccessor:
             ``point_data['property_0']``, ``property_1``, etc.
 
         """
-        return from_manifold(self.to_manifold().set_properties(new_num_prop, f))
+        return from_manifold(self._valid_manifold().set_properties(new_num_prop, f))
 
     def as_original(self) -> pv.PolyData:
         """Mark the result as a fresh original (assigns a new original ID).
@@ -768,7 +795,7 @@ class ManifoldAccessor:
             Mesh registered as an original within Manifold's tracking.
 
         """
-        return from_manifold(self.to_manifold().as_original())
+        return from_manifold(self._valid_manifold().as_original())
 
     # ------------------------------------------------------------------
     # Properties / queries
@@ -860,15 +887,20 @@ class ManifoldAccessor:
 
     @property
     def is_valid(self) -> bool:
-        """Whether the input is a valid (closed, manifold) solid.
+        """Whether the input is a valid (closed, manifold, outward-facing) solid.
+
+        Methods that return geometry raise :class:`ValueError` on an
+        invalid mesh; queries such as this one never do.
 
         Returns
         -------
         bool
-            ``True`` when ``status`` is :attr:`~manifold3d.Error.NoError`.
+            ``True`` when ``status`` is :attr:`~manifold3d.Error.NoError`
+            and the volume is not negative (the faces are not inside out).
 
         """
-        return self.status == manifold3d.Error.NoError
+        self._default_manifold()
+        return self._cached_error is None
 
     @property
     def status(self) -> manifold3d.Error:
@@ -942,7 +974,7 @@ class ManifoldAccessor:
             Closest distance, clamped at ``search_length``.
 
         """
-        return float(self.to_manifold().min_gap(_coerce_manifold(other), search_length))
+        return float(self._valid_manifold().min_gap(_coerce_manifold(other), search_length))
 
     # ------------------------------------------------------------------
     # Batch helpers (exposed here for fluent chaining)
@@ -965,7 +997,7 @@ class ManifoldAccessor:
             The composed result.
 
         """
-        items = [self.to_manifold()] + [_coerce_manifold(o) for o in others]
+        items = [self._valid_manifold()] + [_coerce_manifold(o) for o in others]
         return from_manifold(manifold3d.Manifold.compose(items))
 
 
